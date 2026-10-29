@@ -71,6 +71,16 @@ function money(value: number): number {
   return amount / 100;
 }
 
+/** Flag implausible entered per-share prices for explicit user confirmation.
+ * This is only a warning: historical trades, splits, and corporate actions can
+ * legitimately create a large gap from a current closing quote.
+ */
+export function isSuspiciousTradePrice(price: number, referencePrice: number): boolean {
+  return Number.isFinite(price) && Number.isFinite(referencePrice)
+    && price > 0 && referencePrice > 0
+    && (price >= 2 * referencePrice || price <= referencePrice / 2);
+}
+
 export function todayTaipei(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
