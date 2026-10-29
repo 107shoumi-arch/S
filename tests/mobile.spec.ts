@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { openGroup, showCalculator } from './ui-flows';
 
 // Synthetic prices are isolated to browser tests, never shipped by the market adapter.
 const quote = {
@@ -61,6 +62,17 @@ for (const width of [375, 390, 393, 430, 440]) {
     for (const name of ['總覽', '自選', '分析', '持倉', '設定']) {
       await tab(page, name);
       await assertNoOverflow(page);
+      if (name === '分析') {
+        await showCalculator(page);
+        await openGroup(page, '進階風險設定');
+        await assertNoOverflow(page);
+      }
+      if (name === '設定') {
+        for (const group of ['資料與備份', '交易成本設定', '加入 iPhone 主畫面', '關於與功能範圍']) {
+          await openGroup(page, group);
+          await assertNoOverflow(page);
+        }
+      }
       const navButtons = page.getByRole('navigation').getByRole('button');
       await expect(navButtons).toHaveCount(5);
       for (const button of await navButtons.all()) {
@@ -179,10 +191,12 @@ test('手動日期行情、加碼減碼、股利、即時計算及重新開啟�
   await assertNoOverflow(page);
   await page.reload();
   await tab(page, '持倉');
+  await openGroup(page, '交易紀錄');
   await expect(page.locator('.transaction-row')).toHaveCount(3);
   await expect(position).toContainText('900 股');
   await expect(page.locator('.metric-grid > div').filter({ hasText: '持倉市值' }).locator('b')).toHaveText('81,000');
   await tab(page, '設定');
+  await openGroup(page, '交易成本設定');
   await page.getByLabel('手續費折扣', { exact: true }).fill('1');
   await tab(page, '持倉');
   await expect(page.locator('.metric-grid > div').filter({ hasText: '持倉成本（含費）' }).locator('b')).toHaveText('90,076.5');
@@ -212,6 +226,7 @@ test('損毀的本機資料不被預設值覆寫，可透過有效備份復原�
       quantity: 1000, price: 100, feeSettings: { ...fees, discount: 0.6 } }],
   };
   page.once('dialog', dialog => dialog.accept());
+  await openGroup(page, '資料與備份');
   await page.getByLabel('匯入投資資料備份', { exact: true }).setInputFiles({
     name: 'recovery.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)),
   });
@@ -225,6 +240,7 @@ test('行情 CSV 可匯入實際輸入值，負價格檔案被拒絕且保留已
   await mockMarket(page, 'error');
   await page.goto('/');
   await tab(page, '設定');
+  await openGroup(page, '資料與備份');
   const csv = 'symbol,name,price,asOf,market,kind\n00679B,使用者匯入資料測試,17.55,2026-10-27,TWSE,bond-etf';
   await page.getByLabel('匯入行情 CSV', { exact: true }).setInputFiles({
     name: 'quotes.csv', mimeType: 'text/csv', buffer: Buffer.from(csv),
@@ -262,6 +278,7 @@ test('搜尋、K 線容器縮放、週月切換及風險試算會隨精確數值
   await expect(page.getByRole('img', { name: /週 K 線圖/ })).toBeVisible();
   await page.getByRole('button', { name: '月 K', exact: true }).click();
   await expect(page.getByRole('img', { name: /月 K 線圖/ })).toBeVisible();
+  await showCalculator(page);
   await expect(page.locator('.risk-primary strong')).toBeVisible();
   const initialLoss = await page.locator('.risk-primary strong').textContent();
   await page.getByLabel('持有股數', { exact: true }).fill('100');
@@ -283,6 +300,7 @@ test('深淺與自訂主題、備份下載及拒絕無效匯入', async ({ page 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.getByLabel('自訂主題色', { exact: true }).fill('#5f468b');
   await expect.poll(() => page.locator('html').evaluate(el => el.style.getPropertyValue('--accent'))).toBe('#5f468b');
+  await openGroup(page, '資料與備份');
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: '匯出備份', exact: true }).click();
   const backup = await download;
@@ -319,7 +337,7 @@ test('行情更新保留捲動位置、可讀載入狀態與最後一筆內容�
   await expect(page.getByRole('button', { name: '更新行情', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  const lastContent = await page.locator('main .card').last().boundingBox();
+  const lastContent = await page.locator('main .card:visible').last().boundingBox();
   const bottomNav = await page.getByRole('navigation').boundingBox();
   expect(lastContent!.y + lastContent!.height).toBeLessThanOrEqual(bottomNav!.y + 1);
 });
@@ -343,4 +361,12 @@ test('430 × 932 實際服務啟動畫面截圖，不攔截市場資料', async 
   await page.goto('/');
   await expect(page.getByRole('button', { name: '更新行情', exact: true })).toBeEnabled({ timeout: 30_000 });
   await page.screenshot({ path: 'screenshots/iphone-430-actual.png' });
+  for (const theme of ['light', 'dark']) {
+    await tab(page, '設定');
+    await page.getByLabel('顯示模式', { exact: true }).selectOption(theme);
+    for (const [name, slug] of [['總覽', 'overview'], ['自選', 'watchlist'], ['分析', 'analysis'], ['持倉', 'portfolio'], ['設定', 'settings']]) {
+      await tab(page, name);
+      await page.screenshot({ path: `screenshots/simple-430-actual-${slug}-${theme}.png` });
+    }
+  }
 });

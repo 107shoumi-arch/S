@@ -31,7 +31,10 @@ export function parseQuoteCsv(text: string): Quote[] {
     if (new Date(`${datePart}T00:00:00Z`).toISOString().slice(0, 10) !== datePart) throw new Error(`第 ${i + 2} 列日期不存在。`);
     // A date-only record stays date-only; do not invent a precise quotation time.
     const asOf = item.asOf;
-    if (Date.parse(asOf) > Date.now() + 5 * 60_000) throw new Error(`第 ${i + 2} 列行情時間不可位於未來。`);
+    const taipeiParts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const taipeiToday = ['year', 'month', 'day'].map((type) => taipeiParts.find((part) => part.type === type)?.value).join('-');
+    // Date-only records describe a Taiwan trading date, not midnight UTC.
+    if (dayOnly ? asOf > taipeiToday : Date.parse(asOf) > Date.now() + 5 * 60_000) throw new Error(`第 ${i + 2} 列行情時間不可位於未來。`);
     if (!['TWSE', 'TPEx'].includes(item.market)) throw new Error(`第 ${i + 2} 列 market 須為 TWSE 或 TPEx。`);
     if (!['stock', 'etf', 'bond-etf'].includes(item.kind)) throw new Error(`第 ${i + 2} 列 kind 須為 stock、etf 或 bond-etf。`);
     const optional = (key: string) => {

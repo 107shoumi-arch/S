@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { openGroup, showCalculator } from './ui-flows';
 
 // These controlled, synthetic values are used only by this audit. They are not
 // market data, user holdings, or application defaults.
@@ -67,10 +68,18 @@ for (const theme of ['light', 'dark']) {
       await navigate(page, label);
       if (label === '分析') await expect(page.locator('.chart canvas').first()).toBeVisible();
       await layoutCheck(page);
-      await page.screenshot({ path: `screenshots/audit-430-${slug}-${theme}-full.png`, fullPage: true });
-      await page.screenshot({ path: `screenshots/audit-430-${slug}-${theme}.png` });
+      await page.screenshot({ path: `screenshots/simple-430-${slug}-${theme}-full.png`, fullPage: true });
+      await page.screenshot({ path: `screenshots/simple-430-${slug}-${theme}.png` });
+      if (label === '分析') {
+        await showCalculator(page);
+        await layoutCheck(page);
+        await page.screenshot({ path: `screenshots/simple-430-calculator-${theme}.png` });
+        await openGroup(page, '進階風險設定');
+        await layoutCheck(page);
+        await page.screenshot({ path: `screenshots/simple-430-calculator-${theme}-full.png`, fullPage: true });
+      }
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      const content = await page.locator('main .card').last().boundingBox();
+      const content = await page.locator('main .card:visible').last().boundingBox();
       const nav = await page.getByRole('navigation').boundingBox();
       expect(content!.y + content!.height).toBeLessThanOrEqual(nav!.y + 1);
     }
@@ -84,6 +93,7 @@ test('交易對話框可縮至鍵盤高度、操作末端輸入與焦點循環',
   await opener.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('button', { name: '關閉對話框' })).toBeFocused();
+  await openGroup(page, '費用與交易方式');
   // A reduced visual viewport is a regression check, not a native iOS keyboard.
   await page.setViewportSize({ width: 430, height: 500 });
   const discount = dialog.getByLabel('本次手續費折扣', { exact: true });
@@ -98,7 +108,7 @@ test('交易對話框可縮至鍵盤高度、操作末端輸入與焦點循環',
   await dialog.getByRole('button', { name: '儲存交易', exact: true }).focus();
   await page.keyboard.press('Tab');
   await expect(dialog.getByRole('button', { name: '關閉對話框' })).toBeFocused();
-  await page.screenshot({ path: 'screenshots/audit-430-keyboard-viewport.png' });
+  await page.screenshot({ path: 'screenshots/simple-430-keyboard-viewport.png' });
   await page.keyboard.press('Escape');
   await expect(dialog).not.toBeVisible();
   await expect(opener).toBeFocused();
@@ -114,11 +124,13 @@ test('自選、帶入及套用試算、刪除取消與確認都有真實效果',
   await searchPanel.getByRole('button', { name: '加入自選 0050', exact: true }).click();
   await searchPanel.locator('.quote-row').filter({ hasText: '2330' }).locator('.quote-main').click();
   await page.getByRole('button', { name: '帶入試算', exact: true }).click();
+  await expect(page.locator('.risk-card')).toBeVisible();
   await expect(page.getByLabel('進場價格', { exact: true })).toHaveValue('100');
   await page.getByLabel('最大可承受損失', { exact: true }).fill('1000');
   await page.getByRole('button', { name: '套用可承受股數', exact: true }).click();
   expect(Number(await page.getByLabel('持有股數', { exact: true }).inputValue())).toBeLessThan(1000);
   await navigate(page, '持倉');
+  await openGroup(page, '交易紀錄');
   const remove = page.getByRole('button', { name: '刪除 2026-10-01 2330 交易', exact: true });
   page.once('dialog', dialog => dialog.dismiss());
   await remove.click();
@@ -126,7 +138,7 @@ test('自選、帶入及套用試算、刪除取消與確認都有真實效果',
   page.once('dialog', dialog => dialog.accept());
   await remove.click();
   await expect(page.locator('.transaction-row')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: '從第一筆投資開始' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '尚無持倉', exact: true })).toBeVisible();
 });
 
 test('行情慢速更新時保留數值卡片與圖表，且不改變捲動位置', async ({ page }) => {
@@ -182,6 +194,7 @@ test('保留舊行情時清楚標為快取，手動無效價格錯誤出現在�
 test('極端自訂白色或黑色在深淺模式仍保有可讀對比', async ({ page }) => {
   await prepare(page);
   await navigate(page, '設定');
+  await openGroup(page, '關於與功能範圍');
   for (const theme of ['light', 'dark']) {
     await page.getByLabel('顯示模式', { exact: true }).selectOption(theme);
     for (const accent of ['#ffffff', '#000000']) {
@@ -212,4 +225,67 @@ test('極端自訂白色或黑色在深淺模式仍保有可讀對比', async ({
       expect(ratios.positive).toBeGreaterThanOrEqual(4.5);
     }
   }
+});
+
+test('首頁三個常用動作一按直達，交易費用預設收合仍可輸入精確交易', async ({ page }) => {
+  await prepare(page);
+  for (const action of ['查股票', '新增交易', '風險試算']) {
+    await expect(page.getByRole('button', { name: action, exact: true })).toBeInViewport();
+  }
+  await page.getByRole('button', { name: '查股票', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '搜尋股票代號或中文名稱', exact: true })).toBeFocused();
+  await navigate(page, '總覽');
+  await page.getByRole('button', { name: '新增交易', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('買入或賣出價格', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('本次手續費折扣', { exact: true })).not.toBeVisible();
+  await openGroup(page, '費用與交易方式');
+  await dialog.getByLabel('本次手續費折扣', { exact: true }).fill('0.5');
+  await expect(dialog.getByLabel('本次手續費折扣', { exact: true })).toHaveValue('0.5');
+  await dialog.getByLabel('股票代號', { exact: true }).fill('2317');
+  await dialog.getByLabel('買入或賣出價格', { exact: true }).fill('101');
+  await dialog.getByLabel('買入或賣出股數', { exact: true }).fill('10');
+  await dialog.getByRole('button', { name: '儲存交易', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole('navigation').getByRole('button', { name: '持倉', exact: true })).toHaveAttribute('aria-current', 'page');
+  const newPosition = page.locator('.position').filter({ hasText: '2317' });
+  await expect(newPosition).toContainText('10 股');
+  await page.getByRole('button', { name: '補入價格', exact: true }).click();
+  await expect(dialog.getByLabel('股票代號', { exact: true })).toHaveValue('2317');
+  await dialog.getByLabel('手動報價', { exact: true }).fill('105');
+  await dialog.getByRole('button', { name: '儲存手動價格', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(newPosition).toContainText('1,050');
+  await navigate(page, '總覽');
+  await page.getByRole('button', { name: '風險試算', exact: true }).click();
+  await expect(page.locator('.risk-card')).toBeVisible();
+  await expect(page.getByLabel('進場價格', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('滑價比例', { exact: true })).not.toBeVisible();
+});
+
+test('走勢與試算分開操作，選股、精確條件與進階風險設定切換後仍保留', async ({ page }) => {
+  await prepare(page);
+  await navigate(page, '分析');
+  await page.getByLabel('選擇分析標的', { exact: true }).selectOption('0050');
+  await expect(page.locator('.quote-detail strong')).toHaveText('50.00');
+  await expect(page.locator('.risk-card')).not.toBeVisible();
+  await page.getByRole('button', { name: '帶入試算', exact: true }).click();
+  await expect(page.getByLabel('進場價格', { exact: true })).toHaveValue('50');
+  await page.getByLabel('持有股數', { exact: true }).fill('321');
+  await openGroup(page, '進階風險設定');
+  await page.getByLabel('跳空風險', { exact: true }).fill('5');
+  const loss = await page.locator('.risk-primary strong').textContent();
+  await page.getByRole('button', { name: '走勢', exact: true }).click();
+  await expect(page.getByLabel('選擇分析標的', { exact: true })).toHaveValue('0050');
+  await showCalculator(page);
+  await expect(page.getByLabel('進場價格', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('持有股數', { exact: true })).toHaveValue('321');
+  await openGroup(page, '進階風險設定');
+  await expect(page.getByLabel('跳空風險', { exact: true })).toHaveValue('5');
+  await expect(page.locator('.risk-primary strong')).toHaveText(loss!);
+  const details = await openGroup(page, '進階風險設定');
+  await details.locator(':scope > summary').click();
+  await expect(page.getByLabel('跳空風險', { exact: true })).not.toBeVisible();
+  await expect(page.locator('.risk-primary strong')).toHaveText(loss!);
 });

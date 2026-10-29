@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseQuoteCsv } from './market-import';
 
 const header = 'symbol,name,price,asOf,market,kind,change,volume\n';
@@ -20,6 +20,15 @@ describe('quote CSV import — synthetic test fixtures only', () => {
     expect(() => parseQuoteCsv(header + '2330,測試,-1,2025-01-02,TWSE,stock,,')).toThrow('價格');
     expect(() => parseQuoteCsv(header + '2330,測試,100,2099-01-01,TWSE,stock,,')).toThrow('未來');
     expect(() => parseQuoteCsv(header + '2330,測試,100,2025-02-30,TWSE,stock,,')).toThrow('日期不存在');
+  });
+  it('accepts today in Taiwan before UTC midnight but rejects tomorrow', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-28T16:30:00Z'));
+    try {
+      expect(parseQuoteCsv(header + '2330,測試,100,2026-10-29,TWSE,stock,,')[0].asOf).toBe('2026-10-29');
+      expect(() => parseQuoteCsv(header + '2330,測試,100,2026-10-30,TWSE,stock,,')).toThrow('未來');
+      expect(() => parseQuoteCsv(header + '2330,測試,100,2026-10-29T01:00:00+08:00,TWSE,stock,,')).toThrow('未來');
+    } finally { vi.useRealTimers(); }
   });
   it('requires market, instrument class, unique symbols and whole-share volume', () => {
     expect(() => parseQuoteCsv(header + '2330,測試,100,2025-01-02,OTHER,stock,,')).toThrow('market');

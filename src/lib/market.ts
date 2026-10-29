@@ -9,6 +9,7 @@ export type { Candle, HistoryResponse, MarketResponse, Quote } from './market-ty
 const TWSE = 'https://openapi.twse.com.tw/v1';
 const TPEX = 'https://www.tpex.org.tw/openapi/v1';
 const CACHE_TTL = 15 * 60_000;
+const EMPTY_FAILURE_RETRY_TTL = 30_000;
 const CACHE_FILE = join(process.cwd(), '.cache', 'official-market.json');
 let memory: MarketResponse | null = null;
 let inflight: Promise<MarketResponse> | null = null;
@@ -93,14 +94,41 @@ export function parseOfficialQuotes(data: unknown, market: Market): Quote[] {
 
 export function parseOfficialIndex(data: unknown): MarketIndex | null {
   if (!Array.isArray(data)) return null;
-  return data.map((item: Row) => {
+  const today = taipeiCalendar().today;
+  return data.map((raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return null;
+    const item = raw as Row;
     const value = numberValue(field(item, 'TAIEX', '發行量加權股價指數'));
     const asOf = officialDate(field(item, 'Date', '日期'));
-    return value !== null && asOf ? {
+    return value !== null && value > 0 && asOf && asOf <= today ? {
       name: '加權指數', value, change: numberValue(field(item, 'Change', '漲跌點數')),
       asOf, source: '臺灣證券交易所・每日市場成交資訊',
     } : null;
   }).filter((v): v is MarketIndex => v !== null).sort((a, b) => b.asOf.localeCompare(a.asOf))[0] ?? null;
+}
+
+/** Null means this source could not provide usable data, preserving dated cache. */
+export function mergeMarketSnapshots(previous: MarketResponse | null, current: {
+  twse: Quote[] | null; tpex: Quote[] | null; index: MarketIndex | null;
+}, fetchedAt = new Date().toISOString()): MarketResponse {
+  const errors: string[] = [];
+  const quotes: Quote[] = [];
+  let cached = false;
+  for (const [market, fresh] of [['TWSE', current.twse], ['TPEx', current.tpex]] as const) {
+    if (fresh) quotes.push(...fresh);
+    else {
+      const fallback = previous?.quotes.filter((q) => q.market === market) ?? [];
+      quotes.push(...fallback);
+      cached ||= fallback.length > 0;
+      errors.push(`${market === 'TWSE' ? '上市' : '上櫃'}官方收盤資料暫時無法取得（網路權限、來源維護或格式變更）；可匯入自行核對的行情 CSV。`);
+    }
+  }
+  const index = current.index ?? previous?.index ?? null;
+  if (!current.index) {
+    errors.push('加權指數暫無可驗證的新資料。');
+    cached ||= !!previous?.index;
+  }
+  return { quotes: quotes.sort((a, b) => a.symbol.localeCompare(b.symbol)), index, fetchedAt, errors, cached };
 }
 
 async function previousSnapshot(): Promise<MarketResponse | null> {
@@ -120,26 +148,13 @@ async function refresh(): Promise<MarketResponse> {
     officialJson(`${TPEX}/tpex_mainboard_daily_close_quotes`).then((v) => parseOfficialQuotes(v, 'TPEx')),
     officialJson(`${TWSE}/exchangeReport/FMTQIK`).then(parseOfficialIndex),
   ]);
-  const errors: string[] = [];
-  let quotes: Quote[] = [];
-  for (const [i, market] of (['TWSE', 'TPEx'] as const).entries()) {
-    const result = results[i];
-    if (result.status === 'fulfilled') quotes.push(...result.value as Quote[]);
-    else {
-      errors.push(`${market === 'TWSE' ? '上市' : '上櫃'}官方收盤資料暫時無法取得（網路權限、來源維護或格式變更）；可匯入自行核對的行情 CSV。`);
-      quotes.push(...(previous?.quotes.filter((q) => q.market === market) ?? []));
-    }
-  }
-  const indexResult = results[2];
-  const index = indexResult.status === 'fulfilled' ? indexResult.value as MarketIndex | null : previous?.index ?? null;
-  if (indexResult.status === 'rejected' || !index) errors.push('加權指數暫無可驗證資料。');
-  quotes = quotes.sort((a, b) => a.symbol.localeCompare(b.symbol));
-  const response: MarketResponse = {
-    quotes, index, fetchedAt: new Date().toISOString(), errors,
-    cached: results.slice(0, 2).some((v) => v.status === 'rejected') && !!previous?.quotes.length,
-  };
+  const response = mergeMarketSnapshots(previous, {
+    twse: results[0].status === 'fulfilled' ? results[0].value as Quote[] : null,
+    tpex: results[1].status === 'fulfilled' ? results[1].value as Quote[] : null,
+    index: results[2].status === 'fulfilled' ? results[2].value as MarketIndex | null : null,
+  });
   memory = response;
-  if (quotes.length) {
+  if (response.quotes.length || response.index) {
     try { await mkdir(join(process.cwd(), '.cache'), { recursive: true }); await writeFile(CACHE_FILE, JSON.stringify(response)); }
     catch { /* Read-only hosting still supports memory and browser caches. */ }
   }
@@ -148,7 +163,10 @@ async function refresh(): Promise<MarketResponse> {
 
 export async function getMarket(query = ''): Promise<MarketResponse> {
   let result = memory;
-  if (!result || Date.now() - Date.parse(result.fetchedAt) > CACHE_TTL) {
+  // An entirely unavailable market should recover shortly after permissions or
+  // connectivity return. Keep the normal cadence whenever usable data exists.
+  const ttl = result && !result.quotes.length && !result.index && result.errors.length ? EMPTY_FAILURE_RETRY_TTL : CACHE_TTL;
+  if (!result || Date.now() - Date.parse(result.fetchedAt) > ttl) {
     if (!inflight) inflight = refresh().finally(() => { inflight = null; });
     result = await inflight;
   }

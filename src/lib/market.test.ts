@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
-import { numberValue, officialDate, parseOfficialIndex, parseOfficialQuotes, parseTwseHistory, taipeiCalendar } from './market';
+import { mergeMarketSnapshots, numberValue, officialDate, parseOfficialIndex, parseOfficialQuotes, parseTwseHistory, taipeiCalendar } from './market';
 
 describe('official data parsers — synthetic fixtures, never runtime quotations', () => {
   it('normalizes Gregorian and ROC dates and rejects impossible dates', () => {
@@ -44,6 +44,28 @@ describe('official data parsers — synthetic fixtures, never runtime quotations
     const index = parseOfficialIndex([{ Date: '1151027', TAIEX: '20000', Change: '10' }, { Date: '1151028', TAIEX: '20100', Change: '100' }]);
     expect(index?.asOf).toBe('2026-10-28');
     expect(index?.value).toBe(20100);
+  });
+  it('skips malformed, negative and future index rows while retaining valid data', () => {
+    const index = parseOfficialIndex([null, 'invalid', { Date: '1151028', TAIEX: '-2' }, { Date: '20990101', TAIEX: '99999' }, { Date: '1151028', TAIEX: '20000', Change: '100' }]);
+    expect(index?.value).toBe(20000);
+    expect(index?.asOf).toBe('2026-10-28');
+  });
+  it('preserves dated index-only cache when the source returns no valid index', () => {
+    const priorIndex = { name: '加權指數', value: 20000, change: 100, asOf: '2026-10-28', source: '測試來源' };
+    const result = mergeMarketSnapshots({ quotes: [], index: priorIndex, fetchedAt: '2026-10-28T06:00:00Z', errors: [], cached: false }, { twse: [], tpex: [], index: null }, '2026-10-29T06:00:00Z');
+    expect(result.index).toEqual(priorIndex);
+    expect(result.index?.asOf).toBe('2026-10-28');
+    expect(result.cached).toBe(true);
+    expect(result.errors).toHaveLength(1);
+    expect(result.fetchedAt).toBe('2026-10-29T06:00:00Z');
+  });
+  it('marks only actual quote fallback as cached on a partial source failure', () => {
+    const [oldQuote] = parseOfficialQuotes([{ Date: '1151028', Code: '2330', Name: '測試', ClosingPrice: '100' }], 'TWSE');
+    const snapshot = { quotes: [oldQuote], index: null, fetchedAt: '2026-10-28T06:00:00Z', errors: [], cached: false };
+    expect(mergeMarketSnapshots(snapshot, { twse: null, tpex: [], index: null }).cached).toBe(true);
+    const noFallback = mergeMarketSnapshots(snapshot, { twse: [oldQuote], tpex: null, index: null });
+    expect(noFallback.cached).toBe(false);
+    expect(noFallback.quotes).toEqual([oldQuote]);
   });
   it('parses daily OHLCV and skips no-trade placeholder rows', () => {
     const candles = parseTwseHistory({ data: [['115/10/28', '1,000', '100000', '100', '110', '90', '105'], ['115/10/29', '0', '0', '--', '--', '--', '--']] });

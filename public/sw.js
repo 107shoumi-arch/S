@@ -1,5 +1,5 @@
 /* Bump this name whenever the offline shell changes. Market APIs are NEVER cached here. */
-const VERSION = 'stockpilot-shell-v2';
+const VERSION = 'stockpilot-shell-v3';
 const SHELL = ['/', '/offline.html', '/icons/icon-192.png', '/icons/apple-touch-icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
