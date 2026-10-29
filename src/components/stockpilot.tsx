@@ -172,7 +172,7 @@ export default function StockPilot() {
       const response = await fetch("/api/market", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok && !data.quotes?.length) throw new Error(data.error ?? "行情服務目前無法連線");
-      const incoming = Array.isArray(data.quotes) ? data.quotes.filter(validQuote) : [];
+      const incoming: Quote[] = Array.isArray(data.quotes) ? (data.quotes as unknown[]).filter(validQuote) : [];
       if (incoming.length) {
         setQuotes(incoming); setIndex(data.index ?? null); setCached(Boolean(data.cached));
         try { localStorage.setItem(QUOTE_CACHE, JSON.stringify({ quotes: incoming, index: data.index })); } catch {}
