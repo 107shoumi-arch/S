@@ -5,11 +5,22 @@ import {
   calculateRisk,
   calculateTradeCosts,
   getTaxRule,
+  isSuspiciousTradePrice,
   selectFeeRule,
   todayTaipei,
   type FeeSettings,
   type Transaction,
 } from "./finance";
+
+describe("trade-entry price confirmation", () => {
+  it("flags 0050 accidentally entered at a 2330-sized price", () => {
+    expect(isSuspiciousTradePrice(2425, 108.65)).toBe(true);
+    expect(isSuspiciousTradePrice(108.65, 108.65)).toBe(false);
+    expect(isSuspiciousTradePrice(105, 108.65)).toBe(false);
+    expect(isSuspiciousTradePrice(20, 108.65)).toBe(true);
+    expect(isSuspiciousTradePrice(0, 108.65)).toBe(false);
+  });
+});
 
 const DATE = "2026-10-28";
 const NO_FEES: FeeSettings = { commissionRate: 0, discount: 1, boardLotMinimum: 0, oddLotMinimum: 0, rounding: "floor" };
